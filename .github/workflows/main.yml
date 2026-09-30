@@ -41,14 +41,14 @@ jobs:
         - name: get archive
           uses: actions/download-artifact@v4
           with:
-            name: verademo.war
+            name: npo-wfit-reporting-batch-1.0.0-PRJTASK0814892-STSK0201535-SNAPSHOT.jar
         - name: pipeline-scan action step
           id: pipelien-scan
           uses: veracode/Veracode-pipeline-scan-action@esd-true
           with:
             vid: ${{ secrets.VID }}
             vkey: ${{ secrets.VKEY }}
-            file: "verademo.war" 
+            file: "npo-wfit-reporting-batch-1.0.0-PRJTASK0814892-STSK0201535-SNAPSHOT.jar" 
             request_policy: "Veracode Recommended SCA Very Low"
             debug: 1
             fail_build: false
