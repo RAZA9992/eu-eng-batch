@@ -79,6 +79,7 @@ jobs:
           vkey: ${{ secrets.VKEY }}
           createPR: true
           debug: false
-          fixType: batch
+          fixType: single
+          prComment: true
           files: all
           cwe: '89, 117, 611'
