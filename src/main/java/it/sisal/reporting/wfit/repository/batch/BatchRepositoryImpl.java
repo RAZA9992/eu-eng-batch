@@ -60,6 +60,8 @@ import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
+import java.sql.PreparedStatement;
+import java.util.*;
 
 /*
  * Exception performing whole class analysis ignored.
@@ -146,7 +148,15 @@ implements BatchRepository {
             queryParams.put(QueryParams.EVT_NUMBER.getKey(), event.getNumber());
             queryParams.put(QueryParams.GAME_CODE.getKey(), this.gameCode);
             queryParams.put(QueryParams.EVT_DRAW_DAT.getKey(), event.getDrawDate());
-            int insertEvent = this.batchJDBCTemplate.update(this.queryTask2Config.getMerge(), queryParams);
+String query = this.queryTask2Config.getMerge();
+int insertEvent = this.batchJDBCTemplate.update(connection -> {
+    PreparedStatement ps = connection.prepareStatement(query);
+    ps.setObject(1, event.getYear());
+    ps.setObject(2, event.getNumber());
+    ps.setObject(3, this.gameCode);
+    ps.setObject(4, event.getDrawDate());
+    return ps;
+});
             log.debug("Insert entry for event with year: [{}] and number: [{}] with this result [{}]", new Object[]{event.getYear(), event.getNumber(), insertEvent});
         });
     }
@@ -174,21 +184,39 @@ implements BatchRepository {
             log.debug("Create week balance for last week");
             int createWeekBalance = this.batchJDBCTemplate.update(this.queryTask3Config.getMergeWeekBalance(), queryParams);
             if (0 == createWeekBalance) {
-                throw new ReportingBatchException("Can't create week balance for this win: " + winCode.toString());
+throw new ReportingBatchException("Can't create week balance for this win: " + winCode.toString());
+}
+queryParams.remove(QueryParams.CREATED_ON.getKey());
+if (null != wins && !wins.isEmpty()) {
+    wins.forEach(win -> {
+        BatchRepositoryImpl.insertParamsWins((Map)queryParams, (Win)win);
+        String query = this.queryTask3Config.getMergeWeekAggregate();
+        PreparedStatement ps = null;
+        try {
+            ps = this.batchJDBCTemplate.getDataSource().getConnection().prepareStatement(query);
+            int paramIndex = 1;
+            for (Map.Entry<String, Object> entry : queryParams.entrySet()) {
+                ps.setObject(paramIndex++, entry.getValue());
             }
-            queryParams.remove(QueryParams.CREATED_ON.getKey());
-            if (null != wins && !wins.isEmpty()) {
-                wins.forEach(win -> {
-                    BatchRepositoryImpl.insertParamsWins((Map)queryParams, (Win)win);
-                    int insertWins = this.batchJDBCTemplate.update(this.queryTask3Config.getMergeWeekAggregate(), queryParams);
-                    log.debug("Insert wins for win: [{}] with this result: [{}]", (Object)winCode, (Object)insertWins);
-                });
-                BatchRepositoryImpl.removeParamsWins(queryParams);
+            int insertWins = ps.executeUpdate();
+            log.debug("Insert wins for win: [{}] with this result: [{}]", (Object)winCode, (Object)insertWins);
+        } catch (SQLException ex) {
+            throw new ReportingBatchException("Failed to execute prepared statement", ex);
+        } finally {
+            if (ps != null) {
+                try {
+                    ps.close();
+                } catch (SQLException ex) {
+                }
             }
-            queryParams.put(QueryParams.UPDATED_ON.getKey(), LocalDateTime.now());
-            int updateWeekBalance = this.batchJDBCTemplate.update(this.queryTask3Config.getUpdate(), queryParams);
-            if (0 == updateWeekBalance) {
-                throw new ReportingBatchException("Can't update week balance for this win: " + winCode.toString());
+        }
+    });
+    BatchRepositoryImpl.removeParamsWins(queryParams);
+}
+queryParams.put(QueryParams.UPDATED_ON.getKey(), LocalDateTime.now());
+int updateWeekBalance = this.batchJDBCTemplate.update(this.queryTask3Config.getUpdate(), queryParams);
+if (0 == updateWeekBalance) {
+    throw new ReportingBatchException("Can't update week balance for this win: " + winCode.toString());
             }
         }
         catch (Exception e) {
@@ -219,6 +247,9 @@ implements BatchRepository {
             log.debug("Create week balance for last week");
             int createWeekBalance = this.batchJDBCTemplate.update(this.queryTask4Config.getMergeWeekBalance(), queryParams);
             if (0 == createWeekBalance) {
+            Set<String> whitelistSalecodeTostring = new HashSet<>(Arrays.asList("item1", "item2", "item3"));
+            if (!saleCode.toString().matches("\\w+(\\s*\\.\\s*\\w+)*") && !whitelistSalecodeTostring.contains(saleCode.toString()))
+                throw new IllegalArgumentException();
                 throw new ReportingBatchException("Can't create week balance for this sale: " + saleCode.toString());
             }
             queryParams.remove(QueryParams.CREATED_ON.getKey());
@@ -255,17 +286,27 @@ implements BatchRepository {
                     this.batchJDBCTemplate.queryForObject(this.queryTask3Config.getCheck(), queryParams, (RowMapper)new WeekGameBalanceRowMapper());
                 }
                 catch (EmptyResultDataAccessException e) {
-                    throw new ReportingBatchException("Week game balance doesn't exist for win type: [{}]" + winCode);
-                }
-            });
-            saleCodes.forEach(saleCode -> {
-                log.debug("Check for sale type: [{}]", saleCode);
-                queryParams.put(QueryParams.SALES_CODE.getKey(), saleCode);
-                try {
-                    this.batchJDBCTemplate.queryForObject(this.queryTask4Config.getCheck(), queryParams, (RowMapper)new WeekGameBalanceRowMapper());
-                }
-                catch (EmptyResultDataAccessException e) {
-                    throw new ReportingBatchException("Week game balance doesn't exist for sale type: [{}]" + saleCode);
+throw new ReportingBatchException("Week game balance doesn't exist for win type: [{}]" + winCode);
+}
+});
+saleCodes.forEach(saleCode -> {
+    log.debug("Check for sale type: [{}]", saleCode);
+    queryParams.put(QueryParams.SALES_CODE.getKey(), saleCode);
+    try {
+        PreparedStatement ps = this.batchJDBCTemplate.getDataSource().getConnection().prepareStatement(this.queryTask4Config.getCheck());
+        int paramIndex = 1;
+        for (Map.Entry<String, Object> entry : queryParams.entrySet()) {
+            ps.setObject(paramIndex++, entry.getValue());
+        }
+        ResultSet rs = ps.executeQuery();
+        if (rs.next()) {
+            new WeekGameBalanceRowMapper().mapRow(rs, 0);
+        } else {
+            throw new EmptyResultDataAccessException(1);
+        }
+    }
+    catch (EmptyResultDataAccessException e) {
+        throw new ReportingBatchException("Week game balance doesn't exist for sale type: [{}]" + saleCode);
                 }
             });
             return true;
