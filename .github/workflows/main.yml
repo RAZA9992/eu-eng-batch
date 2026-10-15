@@ -72,7 +72,7 @@ jobs:
           
       - name: Create fixes from static findings
         id: convert
-        uses: veracode/veracode-fix@single_fix-pr_comment
+        uses: veracode/veracode-fix@sec_vuln_fix
         with:
           inputFile: results.json
           vid: ${{ secrets.VID }}
@@ -82,4 +82,4 @@ jobs:
           fixType: single
           prComment: true
           files: all
-          cwe: '89, 117, 611'
+          cwe: '89, 117, 611, 80, 404, 159, 209, 597, 331, 327, 113, 601, 502'
